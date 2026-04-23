@@ -65,7 +65,7 @@ The study is built on the HumanResources Schema from the AdvancedWorks2025 Datab
 
 	├── 01_HR_Schema_SQL_Query.sql
 	
-	├── ReadMe.md
+	├── README.md
 
 
 
