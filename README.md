@@ -103,7 +103,7 @@ Key Visuals
 
 
 
-!\[Dashboard 1](02_Visualization_Power_BI/HR_Dashboard_1.png)
+<img width="1149" height="643" alt="HR_Dashboard_1" src="https://github.com/user-attachments/assets/a193f574-513c-4498-b963-749a25b4ef1d" />
 
 
 
