@@ -19,7 +19,8 @@ SELECT
     COUNT(*) AS Hires
 FROM HumanResources.Employee
 WHERE YEAR(HireDate) = 2009
-GROUP BY YEAR(HireDate);
+GROUP BY 
+    YEAR(HireDate);
 ----------------------------------------------------------------------------------------------------------------
 -- 3. Largest Growing Department (Strategic Focus Area)
 SELECT TOP 1
@@ -29,10 +30,12 @@ FROM HumanResources.EmployeeDepartmentHistory edh
 JOIN HumanResources.Department d
     ON edh.DepartmentID = d.DepartmentID
 WHERE edh.EndDate IS NULL
-GROUP BY d.Name
-ORDER BY EmployeeCount DESC;
+GROUP BY 
+    d.Name
+ORDER BY 
+    EmployeeCount DESC;
 ----------------------------------------------------------------------------------------------------------------
--- 3. Organizational Depth (Hierarchy Complexity)
+-- 4. Organizational Depth (Hierarchy Complexity)
 SELECT 
     MAX(OrganizationLevel) AS MaxOrgDepth
 FROM HumanResources.Employee;
@@ -107,71 +110,141 @@ ORDER BY
 /* 
 Dashboard 2: Workforce Health, Pay & Fairness 
 */
+-- Key Insights
+----------------------------------------------------------------------------------------------------------------
+-- 1. Find the highest paying role
+SELECT TOP 1
+    e.JobTitle,
+    ROUND(ep.Rate, 2) AS CurrentSalary
+FROM HumanResources.Employee e
+CROSS APPLY (
+    SELECT TOP 1 Rate
+    FROM HumanResources.EmployeePayHistory eph
+    WHERE eph.BusinessEntityID = e.BusinessEntityID
+    ORDER BY RateChangeDate DESC
+) ep
+ORDER BY CurrentSalary DESC;
+
+----------------------------------------------------------------------------------------------------------------
+-- 2. Find the salary inequality ratio
+SELECT 
+    ROUND(MAX(Rate) / MIN(Rate), 2) AS SalaryInequalityRatio
+FROM (
+    SELECT
+        BusinessEntityID,
+        Rate,
+        ROW_NUMBER() OVER (
+            PARTITION BY BusinessEntityID
+            ORDER BY RateChangeDate DESC
+        ) AS rn
+    FROM HumanResources.EmployeePayHistory
+) AS LatestPay
+WHERE rn = 1;
+
+----------------------------------------------------------------------------------------------------------------
+-- 3. Find the average tenure of the employees
+SELECT
+    CAST(AVG(DATEDIFF(day, HireDate, GETDATE()) / 365.0) AS DECIMAL(3,1)) AS AvgCompanyTenure
+FROM HumanResources.Employee;
+
+----------------------------------------------------------------------------------------------------------------
+-- 4. Internal Mobility Rate of the employees
+SELECT 
+    CAST(
+        1.0 * COUNT(CASE WHEN DeptCount > 1 THEN 1 END) / COUNT(*) 
+        AS DECIMAL(4,3)
+    ) AS InternalMobilityRatePercent
+FROM (
+    SELECT 
+        BusinessEntityID,
+        COUNT(DISTINCT DepartmentID) AS DeptCount
+    FROM HumanResources.EmployeeDepartmentHistory
+    GROUP BY BusinessEntityID
+) AS DeptChanges;
+
 ----------------------------------------------------------------------------------------------------------------
 -- 1. Salary distribution across job roles (JobTitle -> Salary)
-With LatestPay AS(
+SELECT
+    TOP 10
+    e.JobTitle,
+    ROUND(lp.Rate, 2) AS CurrentSalary
+FROM (
     SELECT
         BusinessEntityId,
         Rate,
-        ROW_NUMBER() OVER(
+        ROW_NUMBER() OVER (
             PARTITION BY BusinessEntityId
             ORDER BY RateChangeDate DESC
         ) AS rn
     FROM HumanResources.EmployeePayHistory
-)
-SELECT
-    e.JobTitle,
-    ROUND(lp.Rate,2) AS CurrentSalary
-FROM LatestPay lp
+) lp
 JOIN HumanResources.Employee e
-    ON lp.BusinessEntityID=e.BusinessEntityID
+    ON lp.BusinessEntityId = e.BusinessEntityId
 WHERE lp.rn = 1
-ORDER BY 
+ORDER BY
     CurrentSalary DESC;
 
 ----------------------------------------------------------------------------------------------------------------
 -- 2. Average salary difference between men and women within the same job role and department
-WITH LatestPay AS(
+SELECT TOP 10
+    b.DepartmentName,
+    b.JobTitle,
+    b.Gender,
+    ROUND(AVG(b.Rate), 2) AS AverageSalary
+FROM
+(
     SELECT
-        BusinessEntityID,
-        Rate,
-        ROW_NUMBER() OVER(
-        PARTITION BY BusinessEntityId
-        ORDER BY RateChangeDate DESC
-    ) AS rn
-    FROM HumanResources.EmployeePayHistory
-)
-SELECT 
-    d.Name AS DepartmentName,
-    e.Gender,
-    e.JobTitle,
-    ROUND(AVG(lp.Rate),2) AS AverageSalary
-FROM LatestPay lp
-JOIN HumanResources.Employee e
-    ON e.BusinessEntityID=lp.BusinessEntityID
-JOIN HumanResources.EmployeeDepartmentHistory edh
-    ON edh.BusinessEntityID=e.BusinessEntityID
-JOIN HumanResources.Department d
-    ON d.DepartmentID=edh.DepartmentID
-WHERE lp.rn=1 AND edh.EndDate IS NULL
-GROUP BY 
-    e.JobTitle, 
-    d.Name, 
-    e.Gender
-ORDER BY 
-    e.JobTitle, 
-    d.Name, 
-    e.Gender;
-
------------------------------------------------------------------------------------------------------------------- 1. Workforce distribution per Department Name
+        d.Name AS DepartmentName,
+        e.JobTitle,
+        e.Gender,
+        lp.Rate
+    FROM
+    (
+        SELECT
+            eph.BusinessEntityID,
+            eph.Rate
+        FROM HumanResources.EmployeePayHistory eph
+        WHERE eph.RateChangeDate = (
+            SELECT MAX(RateChangeDate)
+            FROM HumanResources.EmployeePayHistory
+            WHERE BusinessEntityID = eph.BusinessEntityID
+        )
+    ) lp
+    JOIN HumanResources.Employee e
+        ON e.BusinessEntityID = lp.BusinessEntityID
+    JOIN HumanResources.EmployeeDepartmentHistory edh
+        ON edh.BusinessEntityID = e.BusinessEntityID
+    JOIN HumanResources.Department d
+        ON d.DepartmentID = edh.DepartmentID
+    WHERE edh.EndDate IS NULL
+) b
+JOIN
+(
+    SELECT
+        d.Name AS DepartmentName,
+        e.JobTitle
+    FROM HumanResources.Employee e
+    JOIN HumanResources.EmployeeDepartmentHistory edh
+        ON edh.BusinessEntityID = e.BusinessEntityID
+    JOIN HumanResources.Department d
+        ON d.DepartmentID = edh.DepartmentID
+    WHERE edh.EndDate IS NULL
+    GROUP BY d.Name, e.JobTitle
+    HAVING COUNT(DISTINCT e.Gender) > 1
+) f
+    ON b.DepartmentName = f.DepartmentName
+   AND b.JobTitle = f.JobTitle
+GROUP BY
+    b.DepartmentName,
+    b.JobTitle,
+    b.Gender
+ORDER BY
+    AverageSalary DESC;
+------------------------------------------------------------------------------------------------------------------ 
 -- 3. Average tenure by department
-SELECT 
+SELECT TOP 10
     d.Name AS DepartmentName,
-    CAST(AVG(
-        DATEDIFF(day, edh.StartDate, 
-            ISNULL(edh.EndDate, GETDATE())
-        ) / 365.0
-    ) AS DECIMAL(4,2)) AS AvgTenureYears
+    AVG(DATEDIFF(day, edh.StartDate, ISNULL(edh.EndDate, GETDATE())) / 365.0) AS AvgTenureYears
 FROM HumanResources.EmployeeDepartmentHistory edh
 JOIN HumanResources.Department d
     ON edh.DepartmentID = d.DepartmentID
@@ -180,29 +253,29 @@ ORDER BY AvgTenureYears DESC;
 
 ----------------------------------------------------------------------------------------------------------------
 -- 4. Workforce Distribution per Department Name
-WITH RankedData AS (
+SELECT 
+    rd.DepartmentID, 
+    rd.Name AS DepartmentName, 
+    COUNT(*) AS NoOfEmployeesPerDept
+FROM (
     SELECT 
         edh.BusinessEntityID, 
         edh.DepartmentID, 
         d.Name,
         ROW_NUMBER() OVER (
-                PARTITION BY edh.BusinessEntityID 
-                ORDER BY edh.StartDate DESC -- or any column that defines order
-            ) AS rn
+            PARTITION BY edh.BusinessEntityID 
+            ORDER BY edh.StartDate DESC
+        ) AS rn
     FROM HumanResources.EmployeeDepartmentHistory edh
     JOIN HumanResources.Department d
-        ON edh.DepartmentID = d.DepartmentID)
-SELECT 
-    DepartmentID, 
-    Name AS DepartmentName, 
-    COUNT(*) AS NoOfEmployeesPerDept
-FROM RankedData
-WHERE rn=1
+        ON edh.DepartmentID = d.DepartmentID
+) rd
+WHERE rd.rn = 1
 GROUP BY 
-    DepartmentID, 
-    Name
+    rd.DepartmentID, 
+    rd.Name
 ORDER BY 
-    DepartmentID;
+    rd.DepartmentID;
 
 ----------------------------------------------------------------------------------------------------------------
 -- Workforce distribution per Job titles (TOP 5)
